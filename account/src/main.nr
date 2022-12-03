@@ -1,14 +1,12 @@
 // Account Circuit Specification: https://docs.aztec.network/spec/account_circuit
 
-// Aztec account is composed of (1) the account (public/private key pair) and (2) signers
-// (1) is associated with a 'viewing key' to decrypt notes
+// Registered Aztec accounts are composed of (1) the account (public/private key pair) and (2) signers
+// (1) is associated with a 'private or viewing key' to decrypt notes
 // (2) is associated with 'spending / signing key' to spend notes
-
-// Unregistered accounts = private key / viewing key (decrypting notes and spending notes )
-// Registered accounts =  private key / viewing key (decrypting notes) and seperate registered spending key (spending notes)
 
 use dep::std;
 use dep::utils;
+use dep::notes;
 
 fn generate_nullifiers(
     create: u1,
@@ -29,30 +27,14 @@ fn generate_nullifiers(
 }
 
 fn create_account_notes(
-    alias_hash : Field, 
-    new_account_public_key: [Field; 2], 
-    new_signing_public_key_1: [Field; 2], 
-    new_signing_public_key_2: [Field; 2]
-) -> [Field; 2] {
-    // Generate two account note commitments to register two 'spending_public_keys'
-    let account_commitment_note_1 = std::hash::pedersen([
-        alias_hash,
-        new_account_public_key[0],
-        new_account_public_key[1],
-        new_signing_public_key_1[0],
-        new_signing_public_key_1[1]
-    ])[0];
+    note_1: notes::account::Witness,
+    note_2: notes::account::Witness
+) -> [notes::account::Note; 2] {
+    // Construct account notes and commitments to associate 'spending_public_keys' with account
+    let account_note_1 = notes::account::Note::new(note_1);
+    let account_note_2 = notes::account::Note::new(note_2);
 
-    let account_commitment_note_2 = std::hash::pedersen([
-        alias_hash,
-        new_account_public_key[0],
-        new_account_public_key[1],
-        new_signing_public_key_2[0],
-        new_signing_public_key_2[1]
-    ])[0];
-
-    // Return account note commitments 
-    [account_commitment_note_1, account_commitment_note_2]
+    [account_note_1, account_note_2]
 }
 
 fn sign_message(
@@ -137,11 +119,13 @@ fn main (
     signature: [u8; 64],
     new_signing_public_key_1: [Field; 2],  
     new_signing_public_key_2: [Field; 2],
-    alias_hash: Field,
+    alias_hash: Field,                      // 224-bit field element
     create: u1,
     migrate: u1,
     account_note_index: Field,              
     account_note_path: [Field; 64],
+    note_1: notes::account::Witness,
+    note_2: notes::account::Witness,
 ) -> pub [Field; 16] {
     let proof_id = 0;
 
@@ -154,16 +138,14 @@ fn main (
         create, 
         migrate, 
         alias_hash, 
-        new_account_public_key
+        new_account_public_key,
     ); 
 
     // Create 'account_note' to register 'spending_public_keys' against the account
     // Can register multiple spending keys 
-    let account_note: [Field; 2] = create_account_notes(
-        alias_hash, 
-        account_public_key, 
-        new_signing_public_key_1, 
-        new_signing_public_key_2
+    let account_note_commitments: [notes::account::Note; 2] = create_account_notes(
+        note_1, 
+        note_2
     );
 
     // Check that a signature over the circuit's inputs has been signed by the 'account_private_key'
@@ -207,8 +189,8 @@ fn main (
     // Public outputs
     [
         proof_id,
-        account_note[0],
-        account_note[1],
+        account_note_commitments[0].commitment,
+        account_note_commitments[1].commitment,
         nullifiers[0],
         nullifiers[1],
         public_value,

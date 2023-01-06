@@ -11,4 +11,6 @@ create = ""
 migrate = ""
 account_note_index = []
 account_note_path = []
+note_1 = []
+note_2 = []
 return = []

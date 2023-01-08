@@ -39,8 +39,8 @@ fn generate_nullifiers(
 
 // Create account notes to register 'spending_public_keys' against the account
 fn create_account_notes(
-    note_1: notes::account::Witness,
-    note_2: notes::account::Witness
+    note_1: notes::account::AccountWitness,
+    note_2: notes::account::AccountWitness
 ) -> [Field; 2] {
     // Construct account notes and commitments from witness to associate 'spending_public_keys' with account
     let account_note_1 = notes::account::Account::new(note_1);
@@ -143,8 +143,8 @@ fn main (
     migrate: u1,                            // `migrate` mode
     account_note_index: Field,              // index of account note in commitment tree        
     account_note_path: [Field; 64],         // path of account note in commitment tree
-    note_1: notes::account::Witness,        // witness for note 1
-    note_2: notes::account::Witness,        // witness for note 2
+    note_1: notes::account::AccountWitness, // witness for note 1
+    note_2: notes::account::AccountWitness, // witness for note 2
 ) -> pub [Field; 16] {
     let nullifiers: [Field; 2] = generate_nullifiers(
         create, 

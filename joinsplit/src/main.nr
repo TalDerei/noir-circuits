@@ -16,7 +16,7 @@ global ROOT_TREE_DEPTH: Field = 28;
 global MAX_TXS_BIT_LENGTH: Field = 10;
 global NOTE_VALUE_BIT_LENGTH: Field = 252;
 global TX_FEE_BIT_LENGTH: Field = 244; 
-global ALIAS_HASH_BIT_LENGTH = 224; // need to change this, currently setting random value to compile
+global ALIAS_HASH_BIT_LENGTH = 224; 
 
 // DeFi global variables 
 global DEPOSIT: Field = 1;
@@ -24,9 +24,7 @@ global WITHDRAW: Field = 1;
 global SEND: Field = 1;
 global DEFI_DEPOSIT: Field = 1;
 
-fn derive_public_key(
-    account_private_key: Field
-) -> [Field; 2] {
+fn derive_public_key(account_private_key: Field) -> [Field; 2] {
     constrain account_private_key != 0;
     let account_public_key = std::scalar_mul::fixed_base(account_private_key);
 
@@ -36,19 +34,17 @@ fn derive_public_key(
 fn derive_signer_pk(
     account_public_key: [Field; 2],
     signing_pk: [Field; 2],
-    account_required: u1
+    account_required: bool
 ) -> [Field; 2] {
     let mut signer_pk: [Field; 2] = account_public_key;
-    if account_required == 1 {
+    if account_required {
         signer_pk = signing_pk; 
     }
 
     signer_pk
 }
 
-fn create_account_notes(
-    account_note_witness: notes::account::AccountWitness
-) -> notes::account::Account {
+fn create_account_notes(account_note_witness: notes::account::AccountWitness) -> notes::account::Account {
     let account_note = notes::account::Account::new(account_note_witness);
     
     account_note
@@ -64,6 +60,8 @@ fn create_value_notes(
     let input_value_note_2 = notes::value::ValueNote::new(input_note_2);
     let output_value_note_1 = notes::value::ValueNote::new(output_note_1);
     let output_value_note_2 = notes::value::ValueNote::new(output_note_2);
+
+    constrain (input_value_note_1.commitment != input_value_note_2.commitment);
 
     [input_value_note_1, input_value_note_2, output_value_note_1, output_value_note_2]
 }
@@ -135,16 +133,26 @@ fn generate_nullifiers(
 }
 
 fn verify_signature(
+    public_value: Field,
     public_owner: Field,
     output_note_commitment_1: Field,
     output_note_commitment_2: Field,
     signers: [Field; 2],
     signature: [u8; 64],
-    nullifiers: [Field; 2]
+    nullifiers: [Field; 2],
+    backward_link: Field,
+    allow_chain: Field
 ) {
     let message = std::hash::pedersen(
         [
-            public_owner, output_note_commitment_1, output_note_commitment_2, nullifiers[0], nullifiers[1]
+            public_value,
+            public_owner, 
+            output_note_commitment_1, 
+            output_note_commitment_2, 
+            nullifiers[0], 
+            nullifiers[1],
+            backward_link,
+            allow_chain
         ]
     )[0];
 
@@ -160,6 +168,24 @@ fn verify_signature(
     constrain sig_res == 1;
 }
 
+fn create_partial_value_note(partial_value_note_witness: notes::claim::PartialValueNoteWitness) -> notes::claim::PartialValueNote {
+    let partial_value_note = notes::claim::PartialValueNote::new(partial_value_note_witness);
+
+    partial_value_note
+}
+
+fn create_partial_claim_note(
+    partial_value_note: notes::claim::PartialValueNote,
+    partial_claim_note_witness: notes::claim::PartialClaimNoteWitness
+) -> notes::claim::PartialClaimNote {
+    let partial_claim_note = notes::claim::PartialClaimNote::new(
+        partial_value_note,
+        partial_claim_note_witness
+    );
+    
+    partial_claim_note
+}
+
 fn main (
     asset_id: Field, 
     num_input_notes: Field,
@@ -172,10 +198,11 @@ fn main (
     output_note_1: notes::value::ValueNoteWitness,
     output_note_2: notes::value::ValueNoteWitness,
     account_note_witness: notes::account::AccountWitness,
-    // partial_claim_note_data: PartialClaimWitness,
+    partial_value_note_data: notes::claim::PartialValueNoteWitness,
+    partial_claim_note_data: notes::claim::PartialClaimNoteWitness,
     account_private_key: Field,
     alias_hash: Field,
-    account_required: u1, 
+    account_required: bool, 
     account_note_index: Field,
     account_note_path: [Field; 32],
     signing_pk: [Field; 2],
@@ -194,8 +221,8 @@ fn main (
     backward_link: pub Field, 
     allow_chain: pub Field,
     tree_root: pub Field
-) {
-    // silence unused variables warning
+) -> pub [Field; 16] {
+    // Silence unused variables warning
     constrain allow_chain == 0;
     constrain backward_link == 0;
     constrain defi_deposit_value == 0;
@@ -209,7 +236,7 @@ fn main (
     constrain input_note_2_index as u64 < ((2 << DATA_TREE_DEPTH) as u64);
     constrain input_note_1.value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
     constrain input_note_2.value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
-    constrain output_note_1.value as u64< ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
+    constrain output_note_1.value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
     constrain output_note_2.value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);    
     constrain asset_id as u64< ((2 << NUM_ASSETS_BIT_LENGTH) as u64);
     constrain public_value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
@@ -218,7 +245,7 @@ fn main (
     constrain alias_hash as u64 < ((2 << ALIAS_HASH_BIT_LENGTH) as u64);
     constrain account_required as u64 < 2;
     constrain num_input_notes == 2;
-    // constrain partial_claim_note_data.deposit_value < (2 << DEFI_DEPOSIT_VALUE_BIT_LENGTH);
+    constrain partial_claim_note_data.deposit_value as u64 < ((2 << NOTE_VALUE_BIT_LENGTH) as u64);
 
     // Constrain notes above max output notes do not carry value
     if (num_input_notes < 2) { 
@@ -252,11 +279,6 @@ fn main (
 
     constrain is_deposit | is_withdraw | is_send | is_defi_deposit;
 
-    // Check Notes In = Notes Out
-    let total_in_value = public_input + input_note_1.value + input_note_2.value;
-    let total_out_value = public_output + output_note_1.value + output_note_2.value;
-    constrain total_in_value == total_out_value;
-
     // Asset Type Checks
     constrain input_note_1.asset_id == input_note_2.asset_id;
     constrain output_note_1.asset_id == input_note_2.asset_id as u32;
@@ -264,15 +286,29 @@ fn main (
     constrain public_asset_id as u32 == input_note_1.asset_id as u32;
     constrain public_input != 0;
 
-    // Derive public key from private key
-    let account_public_key: [Field; 2] = derive_public_key(account_private_key);
+    // Conservation of notes: Notes In == Notes Out
+    let total_in_value = public_input + input_note_1.value + input_note_2.value;
+    let total_out_value = public_output + output_note_1.value + output_note_2.value;
+    constrain total_in_value == total_out_value;
 
-    // Derive signer key
-    let signer_pk: [Field; 2] = derive_signer_pk(
-        account_public_key,
-        signing_pk, 
-        account_required
-    );
+    // Transaction fee
+    let tx_fee = total_in_value - total_out_value; // (no underflow allowed)
+
+    // Data validity checks
+    constrain (num_input_notes == 0 | 1 | 2);
+    constrain (is_deposit | is_send | is_withdraw | is_defi_deposit);
+
+    if num_input_notes == 0 {
+        constrain is_deposit;
+    }
+
+    if (is_public_tx) {
+        constrain (public_value > 0);
+        constrain (public_owner > 0);
+    } else {
+        constrain (public_value == 0);
+        constrain (public_owner == 0);
+    }
 
     // Create account notes from witness
     let account_note: notes::account::Account = create_account_notes(
@@ -285,6 +321,49 @@ fn main (
         input_note_2,
         output_note_1,
         output_note_2
+    );
+
+    // Derive public key from private key
+    let account_public_key: [Field; 2] = derive_public_key(account_private_key);
+    
+    // public key constraints
+    constrain (account_public_key == input_note_1.owner);
+    constrain (account_public_key == input_note_2.owner);
+    constrain (account_required == input_note_1.account_required);
+    constrain (account_required == input_note_2.account_required);
+
+    if (output_note_1.creator_pk == 0) {
+        constrain (account_public_key[0] == output_note_1.creator_pk);
+    }
+    if (output_note_2.creator_pk == 0) {
+        constrain (account_public_key[0] == output_note_2.creator_pk);
+    }
+
+    // Check chained transaction inputs are valid:
+    let backward_link_in_use = backward_link != 0;
+    let note1_propagated = backward_link == value_notes[0].commitment;
+    let note2_propagated = backward_link == value_notes[1].commitment;
+    if backward_link_in_use {
+        constrain (note1_propagated | note2_propagated);
+    }
+    if is_defi_deposit {
+        constrain allow_chain != 1;
+    }
+    if allow_chain == 1 {
+        constrain output_note_1.owner == input_note_1.owner;
+    }
+    if allow_chain == 2 {
+        constrain output_note_2.owner == input_note_1.owner;
+    }
+
+    // Constrain unused public inputs to zero
+    constrain defi_root == 0;
+
+    // Derive signer key
+    let signer_pk: [Field; 2] = derive_signer_pk(
+        account_public_key,
+        signing_pk, 
+        account_required
     );
    
     // Verify account ownership with membership proof
@@ -313,14 +392,73 @@ fn main (
 
     // Verify signature
     verify_signature(
+        public_value,
         public_owner, 
         output_note_commitment_1,
         output_note_commitment_2,
         signer_pk, 
         signature, 
-        nullifiers
+        nullifiers,
+        backward_link,
+        allow_chain
     );
-}
 
-// Add additional constrain checks
-// Add defi stuff
+    // DeFi deposit 
+    let mut output_note_1_commitment = value_notes[0].commitment; 
+    let mut input_note_2_value = value_notes[1].value;
+    let mut output_note_1_value = output_note_1.value;
+    let mut defi_deposit_value = 0;
+
+    if is_defi_deposit {
+        // Create partial value note
+        let partial_value_note: notes::claim::PartialValueNote = create_partial_value_note(partial_value_note_data);
+
+        // Create partial claim note
+        let partial_claim_note: notes::claim::PartialClaimNote = create_partial_claim_note(
+            partial_value_note,
+            partial_claim_note_data
+        );
+
+        // DeFi transaction constraints
+        output_note_1_commitment = partial_claim_note.commitment;
+        defi_deposit_value = partial_claim_note.deposit_value;
+
+        constrain (defi_deposit_value > 0);
+
+        let one_input_note = num_input_notes >= 1;
+        let two_input_notes = num_input_notes == 2;
+        constrain one_input_note | two_input_notes;
+
+        let input_note_1_in_use = one_input_note | two_input_notes;
+        let input_note_2_in_use = two_input_notes;
+
+        constrain input_note_1_in_use == true;
+
+        if (input_note_2_in_use & (input_note_1.asset_id != input_note_2.asset_id)) {
+            constrain (defi_deposit_value as Field == input_note_2.value);
+            input_note_2_value = 0; 
+        }
+
+        output_note_1_value = 0; 
+    }
+
+    // Return public inputs array
+    [
+        proof_id,
+        value_notes[2].commitment,
+        value_notes[3].commitment,
+        nullifiers[0],
+        nullifiers[1],
+        public_value,
+        public_owner,
+        public_asset_id,
+        old_data_tree_root as Field,
+        tx_fee,
+        asset_id,
+        bridge_call_data,
+        defi_deposit_value as Field,
+        defi_root,
+        backward_link,
+        allow_chain
+    ]
+}
